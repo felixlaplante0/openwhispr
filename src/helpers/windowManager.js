@@ -260,6 +260,10 @@ class WindowManager {
   async setMainWindowInputRegion(region) {
     const win = this.mainWindow;
     if (process.platform !== "linux" || !win || win.isDestroyed()) return false;
+    // Electron reapplies its own input region on every resize, move and show:
+    // 1x1 while ignoring mouse events, the full window otherwise. Keep it in
+    // step with the helper so a resize can't leave an open panel click-through.
+    win.setIgnoreMouseEvents(region !== null);
     try {
       await this._mainWindowInputRegion().set(region);
       return !win.isDestroyed() && win.isVisible() && !win.isMinimized();

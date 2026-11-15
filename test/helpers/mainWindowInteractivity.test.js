@@ -133,13 +133,59 @@ test("Linux reports visibility and restores capture only after a failed shape wr
       new Promise((_, reject) => {
         rejectAfterClose = reject;
       });
-    const applying = manager.setMainWindowInputRegion(null);
-    assert.deepEqual(win.calls, []);
+    win.calls.length = 0;
+    const applying = manager.setMainWindowInputRegion({
+      x: 0,
+      y: 0,
+      width: 40,
+      height: 40,
+      viewportWidth: 208,
+      viewportHeight: 120,
+    });
+    assert.deepEqual(win.calls, [{ ignore: true, options: undefined }]);
     rejectAfterClose(new Error("helper closed"));
     await assert.rejects(applying, /helper closed/);
-    assert.deepEqual(win.calls, [INTERACTIVE]);
+    assert.deepEqual(win.calls, [{ ignore: true, options: undefined }, INTERACTIVE]);
     win.isDestroyed = () => true;
     assert.equal(await manager.setMainWindowInputRegion(null), false);
+  } finally {
+    Object.defineProperty(process, "platform", original);
+  }
+});
+
+test("Linux keeps a captured panel clickable when Electron reapplies its input region", async () => {
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  try {
+    // Electron 43 keeps the setIgnoreMouseEvents flag and rewrites the X11
+    // input shape from it on every resize: 1x1 while ignoring, else full.
+    let ignoring = false;
+    let inputShape = "full";
+    const win = {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      isMinimized: () => false,
+      setIgnoreMouseEvents: (ignore) => {
+        ignoring = ignore;
+        inputShape = ignore ? "1x1" : "full";
+      },
+      resize: () => {
+        inputShape = ignoring ? "1x1" : "full";
+      },
+    };
+    const manager = Object.assign(Object.create(WindowManager.prototype), { mainWindow: win });
+    applyInputRegion = async (region) => {
+      inputShape = region === null ? "full" : "pill";
+    };
+
+    manager.setMainWindowInteractivity(false);
+    await manager.setMainWindowInputRegion({ x: 0, y: 0, width: 40, height: 40 });
+    win.resize();
+    assert.equal(inputShape, "1x1", "the pill stays click-through until the next sample");
+
+    await manager.setMainWindowInputRegion(null);
+    win.resize();
+    assert.equal(inputShape, "full", "an open panel keeps taking clicks after it grows");
   } finally {
     Object.defineProperty(process, "platform", original);
   }
